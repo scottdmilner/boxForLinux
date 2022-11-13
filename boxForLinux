@@ -1,0 +1,165 @@
+#!/bin/bash
+
+## Linux Box Drive client using rclone and yad
+
+#debug flags
+#set -xue
+
+# Global variables
+BOX_ICON=/usr/share/icons/box.png
+
+# enable job control
+set -m
+
+## Print an error to the console
+function error {
+	echo "Error: "
+	echo $1
+	exit 1
+}
+
+## Wrap text in span tags for larger font size
+##   Each argument goes on a separate line
+function spanWrapper {
+	echo '<span font="14">'
+	for line in "$@"; do
+		echo $line
+	done
+	echo '</span>'
+}
+
+## Check if an rclone configuration named "box" already exists
+function boxConfigExists {
+	return $(rclone listremotes \
+		     | grep -q "^box:"
+	)
+}
+
+## Create an rclone configuration for Box
+function createBoxConfig {
+	# Get user approval to proceed with configuration
+	yad --question \
+		--title="Configure Box" \
+		--text="$(spanWrapper 'To proceed with Box configuration, a' 'sign-in page will open in your browser')" \
+		--image=$BOX_ICON \
+		--button=Cancel:1 \
+		--button=Continue:0
+	local response=$?
+
+	# If they confirmed, configure box and tell user to go to their browser
+	local authPid
+	case $response in
+		0) rclone config create box box &
+		   authPid=$!;;
+		*) exit 0;;
+	esac
+
+	yad --infobox \
+		--title="Authorizing Box..." \
+		--text="$(spanWrapper 'Please complete your Box authentication' 'in your browser')" \
+		--no-buttons \
+		--borders=16 \
+		--image=$BOX_ICON \ &
+	local waitMessagePid=$!
+
+	# Wait for authorization to finish, then kill the waiting message
+	wait $authPid
+	kill $waitMessagePid
+}
+
+## Make sure the mountpoint folder exists and is empty
+function verifyMountpoint {
+	# if localstorage exists
+	if [ ! -d $MOUNTPOINT ]; then
+		mkdir -p $MOUNTPOINT
+	fi
+
+	if [ ! -z "$(ls $MOUNTPOINT)" ]; then
+		error "Mountpoint is not empty"
+	fi
+}
+
+## Mount the rclone share
+function mountBox {
+	verifyMountpoint
+	
+	rclone mount \
+		box: $MOUNTPOINT \
+		--vfs-cache-mode full \
+		--cache-dir /tmp/${USER}/rclone &
+	
+	# Notify the user of a successful mount
+	yad --infobox \
+		--title="Box Mounted!" \
+		--text="$(spanWrapper 'Box has been successfully mounted!')" \
+		--image=$BOX_ICON \
+		--borders=12 \
+		--button=OK:0
+}
+
+## Properly unmount the rclone share
+function unmountBox {
+	fusermount -u $MOUNTPOINT
+	exit 0
+}
+
+## Remove the rclone share
+function removeRcloneConfig {
+	rclone config delete box
+	echo "Successfully removed saved login info"
+}
+
+## Print help message
+function printHelpText {
+	echo "boxForLinux - basic Box client for Linux using rclone and yad"
+	echo ""
+	echo "Usage:"
+	echo "    boxForLinux mountpoint|options"
+	echo ""
+	echo "Options:"
+	echo "    mountpoint"
+	echo "        path to mount Box at, will be created if it does not exist"
+	echo "    logout"
+	echo "        remove saved Box login info"
+	echo "    help"
+	echo "        print this help text"
+}
+
+## Main function
+function main {
+	# Configure rclone for Box if it's not already configured
+	if ! boxConfigExists; then
+		createBoxConfig
+	fi
+
+	# Mount Box and attach the unmount function
+	if ! grep -qs 'box: ' /proc/mounts; then
+		mountBox
+		trap unmountBox EXIT
+	else
+		error "Box is already mounted"
+	fi
+
+	# Start up the notification icon
+	export -f removeRcloneConfig
+	yad --notification \
+		--no-middle \
+		--image=$BOX_ICON \
+		--icon-size="48" \
+		--command="" \
+		--text="Right-click for options" \
+		--menu="Open Box in file browser! nemo ${MOUNTPOINT}\
+		      | Unmount Box             ! quit"
+
+	# Stop the rclone process
+	kill %1
+	exit 0
+}
+
+# Check the first argument and run the appropriate function
+case $1 in
+	"logout")  removeRcloneConfig;;
+	"help"|"") printHelpText;;
+	*)         MOUNTPOINT=$1
+	           main;;
+esac

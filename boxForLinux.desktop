@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=0.5
+Type=Application
+Terminal=false
+Exec=/usr/local/bin/boxForLinux localstorage/Box
+Name=Box
+Keywords=Box;Drive;Files
+Categories=Office
+Icon=/usr/share/icons/box.png
